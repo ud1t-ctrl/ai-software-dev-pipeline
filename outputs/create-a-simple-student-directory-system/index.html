@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Student Directory</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        h1 {
+            color: #34495e;
+        }
+        .student-item {
+            border-bottom: 1px solid #ddd;
+            padding: 10px 0;
+        }
+        .buttons {
+            display: flex;
+            gap: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Student Directory</h1>
+    <button onclick="addStudent()">Add Student</button>
+    <div id="student-list">
+        <!-- Students will be displayed here -->
+    </div>
+
+    <dialog id="student-modal" style="display:none;">
+        <form onsubmit="event.preventDefault(); saveStudent()">
+            Full Name: <input type="text" id="full-name" required><br><br>
+            Enrollment ID: <input type="text" id="enrollment-id" required><br><br>
+            Major: <input type="text" id="major" required><br><br>
+            Sub-Group: <input type="text" id="sub-group" required><br><br>
+            Email Address: <input type="email" id="email-address" required><br><br>
+            <button type="submit">Save</button> | <button onclick="closeModal()">Cancel</button>
+        </form>
+    </dialog>
+
+    <script>
+        async function fetchData(url, method = 'GET', data = null) {
+            const response = await fetch(url, {
+                method,
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: data ? JSON.stringify(data) : null
+            });
+            if (!response.ok) {
+                throw new Error('Network response was not ok');
+            }
+            return await response.json();
+        }
+
+        async function fetchStudents() {
+            try {
+                const students = await fetchData('/api/students');
+                renderStudents(students);
+            } catch (error) {
+                console.error('Error fetching students:', error);
+            }
+        }
+
+        function renderStudents(students) {
+            const studentList = document.getElementById('student-list');
+            studentList.innerHTML = '';
+            students.forEach(student => {
+                const studentItem = document.createElement('div');
+                studentItem.classList.add('student-item');
+                studentItem.innerHTML = `
+                    <p>Full Name: ${student.full_name}</p>
+                    <p>Enrollment ID: ${student.enrollment_id}</p>
+                    <p>Major: ${student.major}</p>
+                    <p>Sub-Group: ${student.sub_group}</p>
+                    <p>Email Address: ${student.email_address}</p>
+                    <div class="buttons">
+                        <button onclick="deleteStudent('${student.enrollment_id}')">Delete</button>
+                    </div>
+                `;
+                studentList.appendChild(studentItem);
+            });
+        }
+
+        function openModal() {
+            document.getElementById('student-modal').showModal();
+        }
+
+        function closeModal() {
+            document.getElementById('student-modal').close();
+        }
+
+        async function saveStudent() {
+            const fullName = document.getElementById('full-name').value;
+            const enrollmentId = document.getElementById('enrollment-id').value;
+            const major = document.getElementById('major').value;
+            const subGroup = document.getElementById('sub-group').value;
+            const emailAddress = document.getElementById('email-address').value;
+
+            try {
+                await fetchData('/api/students', 'POST', { full_name: fullName, enrollment_id: enrollmentId, major, sub_group: subGroup, email_address: emailAddress });
+                closeModal();
+                fetchStudents();
+            } catch (error) {
+                console.error('Error adding student:', error);
+            }
+        }
+
+        async function deleteStudent(enrollmentId) {
+            try {
+                await fetchData(`/api/students/${enrollmentId}`, 'DELETE');
+                fetchStudents();
+            } catch (error) {
+                console.error('Error deleting student:', error);
+            }
+        }
+
+        document.getElementById('add-student').addEventListener('click', openModal);
+
+        // Initial fetch
+        fetchStudents();
+    </script>
+</body>
+</html>

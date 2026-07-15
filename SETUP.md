@@ -20,9 +20,19 @@ pip install -r requirements.txt
 ```
 
 ## 3. Run the pipeline
+
+**Option A — command line:**
 ```
 python main.py
 ```
+
+**Option B — web UI (recommended):**
+```
+streamlit run pipeline_ui.py
+```
+This opens a browser tab automatically at `http://localhost:8501` with a text box for your app idea, a "Run Pipeline" button, live progress, and a file browser with syntax-highlighted previews and download buttons (individually or as one .zip) once it finishes. The sidebar shows the agent team and checks whether Ollama is reachable before letting you run anything.
+
+Both entry points run the exact same underlying logic (`pipeline_runner.py`) — pick whichever you prefer.
 
 You'll see each agent "think" and work in the terminal (verbose=True).
 When it finishes, check the `outputs/` folder for:
@@ -41,10 +51,12 @@ SRS.md, schema.sql, API_DOCS.md, app.py, index.html, test_app.py, README.md
 4. **File management** → `save_file` writes everything into a real `outputs/` folder structure.
 5. **Context chaining** → each `Task`'s `context=[...]` parameter is what makes this a pipeline instead of disconnected prompts.
 6. **Review/debug loop** → the Code Reviewer agent runs after Backend + Frontend, checks their output against the schema/API contract, and rewrites corrected versions with fixes explained in `REVIEW_REPORT.md`.
-7. **Syntax + database-initialization repair loop** → after the crew finishes, `app.py` goes through `debug_fix_backend_code()` in `tools.py`, which runs TWO checks:
-   - **Syntax**: `ast.parse()` — catches broken Python (mismatched brackets, etc.)
-   - **Structural/schema**: actually imports the code in an isolated subprocess and calls `db.create_all()` inside an app context — catches missing primary keys, bad foreign key references, undefined names, and similar real bugs that only surface when the code actually runs. `test_app.py` gets syntax-checking only.
+7. **Deterministic auto-patching** → before any LLM repair loop runs, `auto_patch_backend_code()` and `auto_patch_frontend_code()` in `tools.py` apply guaranteed fixes with plain string/regex operations — no AI involved, so these never depend on the model remembering: CORS gets added to the backend, `db.create_all()` gets wrapped in an app context if it isn't already, and every frontend `<input>` gets a `required` attribute (skipping hidden/submit/button/checkbox/radio).
+8. **Syntax + database-initialization + endpoint-smoke-test repair loop** → after auto-patching, `app.py` goes through THREE checks in `debug_fix_backend_code()`:
+   - **Syntax**: `ast.parse()`
+   - **Structural**: actually imports the code and runs `db.create_all()` inside an app context — catches missing primary keys, bad foreign keys, undefined names.
+   - **Runtime/endpoint**: spins up Flask's test client and fires a request at EVERY registered route (dummy path values, empty JSON body), flagging any 500 responses — catches crashes that only surface when a route actually runs, like a missing import inside a function or an unhandled `IntegrityError`. 4xx responses are fine; only 5xx counts as a bug.
 
-   Each failure gets fed back to the model as an exact error message, and it retries (up to 5 times per stage). This is the closest thing to genuine self-debugging in the pipeline: real execution feedback, not just an LLM's opinion of its own code.
+   Each failure gets fed back to the model as the exact error, retried up to 5 times per stage. `test_app.py` still gets syntax-checking only.
 
-Note: this still doesn't catch every possible bug (e.g. an endpoint that runs fine but returns the wrong data, or a frontend/backend mismatch) — those need the Code Reviewer's judgment or your own testing. But it now catches the exact category of bugs you ran into by hand (missing primary key, `db.create_all()` needing an app context) automatically, before the files even get saved.
+Note: even with all of this, some things still need human judgment — logic bugs where code runs fine but does the wrong thing, or frontend/backend field-name mismatches that don't crash anything. But the specific bugs hit during manual testing (missing primary key, missing CORS, unhandled duplicate-ISBN crash, missing `func` import, empty-form crashes) are now caught automatically before the file is ever saved.

@@ -1,86 +1,29 @@
 """
-Entry point. This is what you run: `python main.py`
+Entry point for the command-line version. This is what you run: `python main.py`
 
-The Crew ties agents + tasks together and runs them.
-Process.sequential = run tasks in the exact order listed, one after another.
-
-Files are saved AFTER the crew finishes, in Python code, using each task's
-raw text output (task.output.raw). This avoids relying on local models to
-correctly call a "save file" tool, which is unreliable over Ollama.
+All the actual logic lives in pipeline_runner.py, shared with the Streamlit
+UI (pipeline_ui.py) so both entry points behave identically.
 """
 
-from crewai import Crew, Process
-from agents import (
-    requirement_analyst,
-    system_designer,
-    backend_developer,
-    frontend_developer,
-    code_reviewer,
-    qa_tester,
-    documentation_writer,
-    ollama_llm,
-)
-from tasks import (
-    task_srs,
-    task_schema,
-    task_api_docs,
-    task_backend,
-    task_frontend,
-    task_review,
-    task_qa,
-    task_readme,
-    FILE_MAP,
-)
-from tools import set_run_folder, write_output_file, debug_fix_python_code, debug_fix_backend_code, _strip_code_fence
-
-pipeline_crew = Crew(
-    agents=[
-        requirement_analyst,
-        system_designer,
-        backend_developer,
-        frontend_developer,
-        code_reviewer,
-        qa_tester,
-        documentation_writer,
-    ],
-    tasks=[
-        task_srs,
-        task_schema,
-        task_api_docs,
-        task_backend,
-        task_frontend,
-        task_review,
-        task_qa,
-        task_readme,
-    ],
-    process=Process.sequential,
-    verbose=True,
-)
+from pipeline_runner import run_pipeline
 
 if __name__ == "__main__":
-    project_idea = input("What app should the pipeline build? (e.g. 'Create a Library Management System'): ").strip()
+    # 1. Ask for a short, safe folder name first
+    folder_name = input("Enter a short name for the output folder (e.g. 'student-app'): ").strip()
+    if not folder_name:
+        folder_name = "default-app"
+
+    # 2. Ask for the detailed project idea for the AI
+    project_idea = input("Enter the full detailed prompt for the agents: ").strip()
     if not project_idea:
         project_idea = "Create a Library Management System"
         print(f"No input given, defaulting to: {project_idea}")
 
-    run_folder = set_run_folder(project_idea)
-    pipeline_crew.kickoff(inputs={"project_idea": project_idea})
-
-    print("\n\n===== SAVING OUTPUT FILES =====")
-    for task, filename, strip_fence in FILE_MAP:
-        raw = task.output.raw if task.output else ""
-        content = _strip_code_fence(raw) if strip_fence else raw
-
-        if filename == "app.py":
-            print(f"\n[{filename}] Running syntax + database-initialization repair loop...")
-            content = debug_fix_backend_code(content, ollama_llm, max_attempts=5)
-        elif filename.endswith(".py"):
-            print(f"\n[{filename}] Running syntax-check-and-repair loop...")
-            content = debug_fix_python_code(content, filename, ollama_llm, max_attempts=5)
-
-        path = write_output_file(filename, content, strip_fence=False)
-        size = len(content or "")
-        print(f"Saved {path} ({size} chars)")
+    # 3. Pass BOTH variables to the runner
+    run_folder, results = run_pipeline(project_idea, folder_name, progress=print)
 
     print(f"\n===== PIPELINE COMPLETE =====")
     print(f"Check the outputs/{run_folder}/ folder for all 8 files.")
+    failed = [r["filename"] for r in results if not r["ok"]]
+    if failed:
+        print(f"Note: these files didn't pass full validation and may need manual review: {', '.join(failed)}")

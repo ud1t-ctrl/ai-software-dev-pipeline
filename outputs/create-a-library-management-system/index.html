@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Library Management System</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .container { max-width: 600px; margin: auto; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; }
+        input, button { width: calc(100% - 22px); padding: 8px; box-sizing: border-box; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Library Management System</h1>
+        
+        <h2>Add a New Book</h2>
+        <form id="addBookForm">
+            <input type="text" id="bookTitle" placeholder="Title" required>
+            <input type="text" id="bookAuthor" placeholder="Author" required>
+            <input type="text" id="bookISBN" placeholder="ISBN" required>
+            <input type="text" id="bookGenre" placeholder="Genre" required>
+            <input type="number" id="bookQuantityAvailable" placeholder="Quantity Available" required>
+            <button type="submit">Add Book</button>
+        </form>
+        
+        <h2>Update a Book</h2>
+        <form id="updateBookForm">
+            <input type="text" id="updateBookId" placeholder="Book ID" required>
+            <input type="text" id="updateBookTitle" placeholder="New Title" required>
+            <input type="text" id="updateBookAuthor" placeholder="New Author" required>
+            <input type="number" id="updateBookQuantityAvailable" placeholder="New Quantity Available" required>
+            <button type="submit">Update Book</button>
+        </form>
+        
+        <h2>Delete a Book</h2>
+        <form id="deleteBookForm">
+            <input type="text" id="deleteBookId" placeholder="Book ID" required>
+            <button type="submit">Delete Book</button>
+        </form>
+        
+        <h2>Register a New Member</h2>
+        <form id="registerMemberForm">
+            <input type="text" id="memberName" placeholder="Name" required>
+            <input type="text" id="memberAddress" placeholder="Address" required>
+            <input type="text" id="memberContactNumber" placeholder="Contact Number" required>
+            <button type="submit">Register Member</button>
+        </form>
+        
+        <h2>Issue a Book</h2>
+        <form id="issueBookForm">
+            <input type="text" id="issueBookId" placeholder="Book ID" required>
+            <input type="text" id="issueMemberId" placeholder="Member ID" required>
+            <input type="date" id="issueDateBorrowed" placeholder="Borrowed Date" required>
+            <button type="submit">Issue Book</button>
+        </form>
+        
+        <h2>Return a Book</h2>
+        <form id="returnBookForm">
+            <input type="text" id="returnLoanId" placeholder="Loan ID" required>
+            <input type="date" id="returnDateReturned" placeholder="Returned Date" >
+            <button type="submit">Return Book</button>
+        </form>
+        
+        <h2>Book Availability Report</h2>
+        <div id="availabilityReport"></div>
+        
+        <h2>Library Usage Report</h2>
+        <div id="usageReport"></div>
+    </div>
+
+    <script>
+        async function fetchData(url, method = 'GET', data = null) {
+       const headers = { 'Content-Type': 'application/json' };
+       const options = { method, headers };
+       if (data !== null && method !== 'GET' && method !== 'HEAD') {
+           options.body = JSON.stringify(data);
+       }
+       const response = await fetch(`http://localhost:5000${url}`, options);
+       return await response.json();
+   }
+        document.getElementById('addBookForm').addEventListener('submit', async event => {
+            event.preventDefault();
+            const data = {
+                Title: document.getElementById('bookTitle').value,
+                Author: document.getElementById('bookAuthor').value,
+                ISBN: document.getElementById('bookISBN').value,
+                Genre: document.getElementById('bookGenre').value,
+                QuantityAvailable: parseInt(document.getElementById('bookQuantityAvailable').value)
+            };
+            const result = await fetchData('/api/books', 'POST', data);
+            alert(result.Message);
+        });
+
+        document.getElementById('updateBookForm').addEventListener('submit', async event => {
+            event.preventDefault();
+            const data = {
+                Title: document.getElementById('updateBookTitle').value,
+                Author: document.getElementById('updateBookAuthor').value,
+                QuantityAvailable: parseInt(document.getElementById('updateBookQuantityAvailable').value)
+            };
+            const result = await fetchData(`/api/books/${document.getElementById('updateBookId').value}`, 'PUT', data);
+            alert(result.Message);
+        });
+
+        document.getElementById('deleteBookForm').addEventListener('submit', async event => {
+            event.preventDefault();
+            const result = await fetchData(`/api/books/${document.getElementById('deleteBookId').value}`, 'DELETE');
+            alert(result.Message);
+        });
+
+        document.getElementById('registerMemberForm').addEventListener('submit', async event => {
+            event.preventDefault();
+            const data = {
+                Name: document.getElementById('memberName').value,
+                Address: document.getElementById('memberAddress').value,
+                ContactNumber: document.getElementById('memberContactNumber').value
+            };
+            const result = await fetchData('/api/members', 'POST', data);
+            alert(`${result.Message} — Membership ID: ${result.MembershipID}`);
+        });
+
+        document.getElementById('issueBookForm').addEventListener('submit', async event => {
+            event.preventDefault();
+            const data = {
+                BookID: parseInt(document.getElementById('issueBookId').value),
+                MembershipID: parseInt(document.getElementById('issueMemberId').value),
+                DateBorrowed: document.getElementById('issueDateBorrowed').value
+            };
+            const result = await fetchData('/api/loans', 'POST', data);
+            alert(result.Message);
+        });
+
+        document.getElementById('returnBookForm').addEventListener('submit', async event => {
+            event.preventDefault();
+            const data = {
+                DateReturned: document.getElementById('returnDateReturned').value
+            };
+            const result = await fetchData(`/api/loans/${document.getElementById('returnLoanId').value}`, 'PUT', data);
+            alert(result.Message);
+        });
+
+        async function loadAvailabilityReport() {
+            const report = await fetchData('/api/reports/availability');
+            document.getElementById('availabilityReport').innerHTML = report.Data.map(row => `
+                <div>${row.Title} - Available: ${row.Available}</div>
+            `).join('');
+        }
+
+        async function loadUsageReport() {
+            const report = await fetchData('/api/reports/usage');
+            document.getElementById('usageReport').innerHTML = report.Data.map(row => `
+                <div>${row.Name} - Books Borrowed: ${row.BooksBorrowedCount}</div>
+            `).join('');
+        }
+
+        window.onload = () => {
+            loadAvailabilityReport();
+            loadUsageReport();
+        };
+    </script>
+</body>
+</html>

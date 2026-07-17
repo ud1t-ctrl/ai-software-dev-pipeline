@@ -4,3 +4,4 @@ __pycache__/
 *.db
 .env
 run_log.txt
+outputs/

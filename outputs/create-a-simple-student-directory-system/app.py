@@ -7,6 +7,7 @@ CORS(app)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///students.db'
 db = SQLAlchemy(app)
 
+
 class Student(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     full_name = db.Column(db.String(100), nullable=False)
@@ -24,6 +25,14 @@ class Student(db.Model):
             "sub_group": self.sub_group,
             "email_address": self.email_address
         }
+
+import os
+from flask import send_from_directory
+
+# Serve the index.html file directly from the current folder
+@app.route('/')
+def serve_index():
+    return send_from_directory(os.path.dirname(os.path.abspath(__file__)), 'index.html')
 
 @app.route('/api/students', methods=['GET'])
 def get_students():

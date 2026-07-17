@@ -9,6 +9,7 @@ main.py). This is more reliable across different local models.
 """
 
 import ast
+import json
 import os
 import re
 import shutil
@@ -165,6 +166,11 @@ def auto_patch_backend_code(code: str) -> str:
       1. Adds `from flask_cors import CORS` + `CORS(app)` if missing.
       2. Wraps a bare `db.create_all()` call in `with app.app_context():`
          if it isn't already inside one.
+      3. Forces the database URI to SQLite and strips MySQL/Postgres driver
+         imports — this pipeline has no external database server running,
+         so a model that decides to use MySQL/Postgres will always crash
+         with a missing-driver or connection-refused error, no matter how
+         many times the LLM retries. SQLite needs nothing installed or running.
     """
     patched = code
 
@@ -201,6 +207,22 @@ def auto_patch_backend_code(code: str) -> str:
                 continue
         new_lines.append(line)
     patched = "\n".join(new_lines)
+
+    # 3. Force SQLite — no external DB server exists in this environment
+    patched = re.sub(
+        r"""app\.config\[['"]SQLALCHEMY_DATABASE_URI['"]\]\s*=\s*.*""",
+        "app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///app.db'",
+        patched,
+    )
+    for driver_import in (
+        r"^\s*import pymysql\s*$",
+        r"^\s*import psycopg2.*$",
+        r"^\s*import cx_Oracle\s*$",
+        r"^\s*import pyodbc\s*$",
+        r"^\s*from\s+pymysql.*$",
+        r"^\s*from\s+psycopg2.*$",
+    ):
+        patched = re.sub(driver_import, "", patched, flags=re.MULTILINE)
 
     return patched
 
@@ -342,7 +364,7 @@ def debug_fix_backend_code(code: str, llm, max_attempts: int = 5) -> str:
             print(f"  [app.py] Database initialization OK on attempt {attempt}")
             break
 
-        print(f"  [app.py] DB init error on attempt {attempt}:\n{error[:500]}")
+        print(f"  [app.py] DB init error on attempt {attempt}:\n{error}")
         if attempt == max_attempts:
             print(f"  [app.py] Max attempts reached on DB init — moving on with current code.")
             break
@@ -370,7 +392,7 @@ def debug_fix_backend_code(code: str, llm, max_attempts: int = 5) -> str:
             print(f"  [app.py] Endpoint smoke test OK on attempt {attempt}")
             return code
 
-        print(f"  [app.py] Endpoint smoke test error on attempt {attempt}:\n{error[:800]}")
+        print(f"  [app.py] Endpoint smoke test error on attempt {attempt}:\n{error}")
         if attempt == max_attempts:
             print(f"  [app.py] Max attempts reached on endpoint test — saving as-is.")
             return code
@@ -392,3 +414,138 @@ def debug_fix_backend_code(code: str, llm, max_attempts: int = 5) -> str:
         code = _strip_code_fence(response)
         code = debug_fix_python_code(code, "app.py", llm, max_attempts=2)
     return code
+
+
+FRONTEND_URL_RE = re.compile(r"""[`'"](/api/[^`'"]*)[`'"]""")
+
+
+def _normalize_route(route: str) -> list:
+    """'/api/books/<int:book_id>' -> ['api', 'books', '<var>'] for comparison."""
+    segments = [s for s in route.strip("/").split("/") if s]
+    return ["<var>" if s.startswith("<") and s.endswith(">") else s for s in segments]
+
+
+def _normalize_frontend_url(url: str) -> list:
+    """'/api/books/${bookId}' -> ['api', 'books', '<var>'] for comparison."""
+    url = re.sub(r"\$\{[^}]*\}", "<var>", url)
+    segments = [s for s in url.strip("/").split("/") if s]
+    return segments
+
+
+def extract_backend_routes(app_code: str, timeout: int = 20):
+    """
+    Imports the given Flask app in an isolated subprocess and returns the
+    list of registered route strings (e.g. '/api/books/<int:book_id>'), or
+    None if the code fails to import at all (in which case the DB-init /
+    endpoint-smoke-test checks already cover that failure elsewhere).
+    """
+    tmp_dir = tempfile.mkdtemp(prefix="pipeline_routes_")
+    try:
+        app_path = os.path.join(tmp_dir, "app_under_test.py")
+        with open(app_path, "w", encoding="utf-8") as f:
+            f.write(app_code)
+
+        harness = textwrap.dedent(f"""
+            import sys, json
+            sys.path.insert(0, {tmp_dir!r})
+            import app_under_test as m
+            routes = [str(rule) for rule in m.app.url_map.iter_rules()
+                      if str(rule) != '/static/<path:filename>']
+            print(json.dumps(routes))
+        """)
+        harness_path = os.path.join(tmp_dir, "_harness.py")
+        with open(harness_path, "w", encoding="utf-8") as f:
+            f.write(harness)
+
+        try:
+            result = subprocess.run(
+                [sys.executable, harness_path],
+                cwd=tmp_dir,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            return None
+
+        if result.returncode != 0:
+            return None
+        try:
+            return json.loads(result.stdout.strip().splitlines()[-1])
+        except (json.JSONDecodeError, IndexError):
+            return None
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def check_frontend_backend_consistency(html: str, app_code: str) -> str | None:
+    """
+    Extracts every /api/... URL referenced in the frontend's JavaScript and
+    compares it against the ACTUAL routes registered in the backend
+    (introspected via extract_backend_routes, not guessed from API_DOCS.md
+    text). Dynamic ID segments are normalized so they match regardless of
+    exact variable name.
+
+    Returns None if every frontend URL matches a real backend route, or a
+    description of the mismatches (plus the real route list) for the LLM
+    to fix against. Returns None (skips the check) if the backend routes
+    can't be introspected at all — that failure is already caught by the
+    DB-init/endpoint-smoke-test checks.
+    """
+    routes = extract_backend_routes(app_code)
+    if routes is None:
+        return None
+
+    backend_patterns = [_normalize_route(r) for r in routes]
+    frontend_urls = sorted(set(FRONTEND_URL_RE.findall(html)))
+
+    mismatches = [
+        url for url in frontend_urls
+        if _normalize_frontend_url(url) not in backend_patterns
+    ]
+
+    if not mismatches:
+        return None
+
+    return (
+        "The frontend calls these URLs that don't match any actual backend route:\n"
+        + "\n".join(f"  - {u}" for u in mismatches)
+        + "\n\nThe ACTUAL routes registered in the backend are:\n"
+        + "\n".join(f"  - {r}" for r in routes)
+    )
+
+
+def debug_fix_frontend_consistency(html: str, app_code: str, llm, max_attempts: int = 3) -> str:
+    """
+    Repair loop for index.html: checks that every URL it calls actually
+    exists on the backend (see check_frontend_backend_consistency), and if
+    not, sends the mismatch + real route list back to the model to fix the
+    JavaScript. This is what catches wrong paths, missing ID segments in a
+    URL, or typos between what the frontend calls and what the backend
+    actually registered.
+    """
+    for attempt in range(1, max_attempts + 1):
+        error = check_frontend_backend_consistency(html, app_code)
+        if error is None:
+            print(f"  [index.html] Frontend-backend URL consistency OK on attempt {attempt}")
+            return html
+
+        print(f"  [index.html] URL mismatch on attempt {attempt}:\n{error}")
+        if attempt == max_attempts:
+            print(f"  [index.html] Max attempts reached — saving as-is.")
+            return html
+
+        fix_prompt = (
+            "The following frontend HTML/JavaScript calls API URLs that don't match "
+            "any route actually registered in the backend. Fix the JavaScript so every "
+            "fetch call uses one of the ACTUAL backend routes listed below exactly "
+            "(adjust the frontend's URLs — do not change the backend).\n\n"
+            f"{error}\n\n"
+            f"CURRENT FRONTEND CODE:\n```html\n{html}\n```\n\n"
+            "Return ONLY the complete corrected HTML file in a single ```html code "
+            "block. Do not include any explanation, notes, or text before or after "
+            "the code block."
+        )
+        response = llm.call([{"role": "user", "content": fix_prompt}])
+        html = _strip_code_fence(response)
+    return html

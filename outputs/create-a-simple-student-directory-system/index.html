@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Student Directory</title>
+    <link rel="icon" href="data:;">
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -24,10 +25,9 @@
 </head>
 <body>
     <h1>Student Directory</h1>
-    <button onclick="addStudent()">Add Student</button>
+    <button onclick="openModal()">Add Student</button>
     <div id="student-list">
-        <!-- Students will be displayed here -->
-    </div>
+        </div>
 
     <dialog id="student-modal" style="display:none;">
         <form onsubmit="event.preventDefault(); saveStudent()">
@@ -36,7 +36,7 @@
             Major: <input type="text" id="major" required><br><br>
             Sub-Group: <input type="text" id="sub-group" required><br><br>
             Email Address: <input type="email" id="email-address" required><br><br>
-            <button type="submit">Save</button> | <button onclick="closeModal()">Cancel</button>
+            <button type="submit">Save</button> | <button type="button" onclick="closeModal()">Cancel</button>
         </form>
     </dialog>
 
@@ -102,6 +102,8 @@
             try {
                 await fetchData('/api/students', 'POST', { full_name: fullName, enrollment_id: enrollmentId, major, sub_group: subGroup, email_address: emailAddress });
                 closeModal();
+                // Clear the form after saving
+                document.querySelector('form').reset();
                 fetchStudents();
             } catch (error) {
                 console.error('Error adding student:', error);
@@ -117,7 +119,7 @@
             }
         }
 
-        document.getElementById('add-student').addEventListener('click', openModal);
+        // FIX 2: Removed the broken eventListener line that was causing the 'null' crash
 
         // Initial fetch
         fetchStudents();

@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mining App</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .container { max-width: 600px; margin: auto; }
+        .form-group { margin-bottom: 15px; }
+        button { padding: 8px 16px; margin: 5px 0; background-color: #4CAF50; color: white; border: none; cursor: pointer; }
+        button:hover { opacity: 0.9; }
+        .console-box { margin-top: 20px; padding: 10px; background: #f4f4f4; border: 1px solid #ccc; font-family: monospace; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>User Authentication</h2>
+    <button onclick="register()">Register</button>
+    <button onclick="login()">Login</button>
+    
+    <h2>Mining Sites</h2>
+    <button onclick="createMiningSite()">Create Mining Site</button>
+    <button onclick="updateMiningSite()">Update Mining Site</button>
+    <button onclick="deleteMiningSite()">Delete Mining Site</button>
+    
+    <h2>Startup Ideas</h2>
+    <button onclick="
+    StartupIdea()">Generate Startup Idea</button>
+    <button onclick="saveFavorite()">Save Favorite</button>
+    <button onclick="removeFavorite()">Remove Favorite</button>
+    
+    <div class="console-box" id="ui-console">
+        <strong>Status:</strong> Waiting for action...<br>(Check F12 Developer Console for full details)
+    </div>
+</div>
+
+<script>
+    let token = null;
+    let currentUserId = null;
+    let currentSiteId = null; 
+    let currentIdeaId = null;
+    let currentFavoriteId = null;
+
+    function updateUI(msg) {
+        document.getElementById('ui-console').innerHTML = `<strong>Status:</strong> ${msg}`;
+    }
+
+    async function request(endpoint, method = 'GET', body = null) {
+        const headers = { 'Content-Type': 'application/json' };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+        
+        try {
+            const response = await fetch(`http://localhost:5000/${endpoint}`, { method, headers, body });
+            
+            if (!response.ok) {
+                console.error(`Error: ${response.status} from ${endpoint}`);
+                updateUI(`Error ${response.status} on ${endpoint}`);
+                return null;
+            }
+
+            const text = await response.text();
+            return text ? JSON.parse(text) : null;
+        } catch (error) {
+            console.error('Fetch error:', error);
+            updateUI('Fetch error. Is the server running?');
+            return null;
+        }
+    }
+
+    async function register() {
+        const data = { name: 'John Doe', email: 'john.doe@example.com' };
+        const response = await request('register', 'POST', JSON.stringify(data));
+        if (response && response.token) {
+            token = response.token;
+            currentUserId = response.userId;
+            console.log('Registered! Token:', token);
+            updateUI('Successfully Registered User!');
+        }
+    }
+
+    async function login() {
+        const data = { email: 'john.doe@example.com', password: 'securepassword' };
+        const response = await request('login', 'POST', JSON.stringify(data));
+        if (response && response.token) {
+            token = response.token;
+            currentUserId = response.userId;
+            console.log('Logged in! Token:', token);
+            updateUI('Successfully Logged In!');
+        }
+    }
+
+    async function createMiningSite() {
+        const data = {
+            location: 'North Pole',
+            mineralType: 'Gold',
+            depositSize: 1000000,
+            estimatedProductionCapacity: 50000,
+            explorationStatus: 'Discovered'
+        };
+        const response = await request('miningsites', 'POST', JSON.stringify(data));
+        if (response && response.siteId) {
+            currentSiteId = response.siteId; 
+            console.log(`Mining site created with ID: ${currentSiteId}`);
+            updateUI(`Mining Site Created (ID: ${currentSiteId})`);
+        }
+    }
+
+    async function updateMiningSite() {
+        if (!currentSiteId) return updateUI("Error: Create a mining site first!");
+        
+        const data = { location: 'New Location', mineralType: 'Silver' };
+        const response = await request(`miningsites/${currentSiteId}`, 'PUT', JSON.stringify(data));
+        if (response) {
+            console.log('Mining site updated');
+            updateUI(`Mining Site ${currentSiteId} Updated!`);
+        }
+    }
+
+    async function deleteMiningSite() {
+        if (!currentSiteId) return updateUI("Error: Create a mining site first!");
+        
+        const response = await request(`miningsites/${currentSiteId}`, 'DELETE');
+        if (response !== null) {
+            console.log('Mining site deleted');
+            updateUI(`Mining Site ${currentSiteId} Deleted!`);
+            currentSiteId = null; 
+        }
+    }
+
+    async function generateStartupIdea() {
+        if (!currentSiteId) return updateUI("Error: Create a mining site first!");
+
+        const idea = await request(`startupideas/miningsite/${currentSiteId}`, 'POST');
+        if (idea) {
+            currentIdeaId = idea.IdeaId;
+            console.log('Generated Startup Idea:', idea);
+            updateUI(`Generated Idea (ID: ${currentIdeaId}): ${idea.Title}`);
+        }
+    }
+
+    async function saveFavorite() {
+        if (!currentUserId || !currentIdeaId) return updateUI("Error: You must log in and generate an idea first!");
+
+        const response = await request('favorites', 'POST', JSON.stringify({ userId: currentUserId, ideaId: currentIdeaId }));
+        if (response && response.favoriteId) {
+            currentFavoriteId = response.favoriteId; // Saving the ID so we can delete it later
+            console.log('Startup idea saved as favorite');
+            updateUI(`Idea saved to Favorites! (Favorite ID: ${currentFavoriteId})`);
+        }
+    }
+
+    async function removeFavorite() {
+        if (!currentFavoriteId) return updateUI("Error: Save a favorite first!");
+
+        const response = await request(`favorites/${currentFavoriteId}`, 'DELETE'); 
+        if (response !== null) {
+            console.log('Favorite removed');
+            updateUI(`Favorite ${currentFavoriteId} Removed!`);
+            currentFavoriteId = null;
+        }
+    }
+</script>
+</body>
+</html>
